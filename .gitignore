@@ -28,3 +28,6 @@ Thumbs.db
 # logs
 *.log
 npm-debug.log*
+
+# seed snapshots (real company data - never commit)
+app/scripts/seed-data/
