@@ -1,6 +1,8 @@
-import { ok, err } from "@/lib/api";
+import { ok, err, checkSameOrigin, serverError } from "@/lib/api";
 import { SheetsClient } from "@/lib/sheets";
 import { getSettings } from "@/lib/queries";
+import { getSecret } from "@/lib/secrets";
+import { STATUS_COL } from "@/lib/approvals";
 
 export function sheetsClientOrThrow(): SheetsClient {
   const s = getSettings();
@@ -12,7 +14,8 @@ export function sheetsClientOrThrow(): SheetsClient {
   return new SheetsClient(spreadsheetId, {
     type: "service_account",
     saEmail: s["sheetsSaEmail"] as string,
-    saPrivateKey: ((s["sheetsSaKey"] as string) ?? "").replace(/\\n/g, "\n"),
+    // M6: private key lưu mã hoá trong DB — giải mã khi dùng
+    saPrivateKey: (getSecret("sheetsSaKey") ?? "").replace(/\\n/g, "\n"),
   });
 }
 
@@ -31,4 +34,22 @@ export async function makeRowResolver(client: SheetsClient) {
   };
 }
 
-export { ok, err };
+/**
+ * M5: đọc cột status của 1 tab 1 lần rồi tra theo số dòng — dùng để kiểm tra
+ * TOCTOU (giá trị ô hiện tại có còn giống oldValue lúc preview không).
+ */
+export function makeStatusReader(client: SheetsClient) {
+  const cache = new Map<string, (string | null)[]>();
+  return async (tab: string, rowNum: number): Promise<string | null> => {
+    let col = cache.get(tab);
+    if (!col) {
+      const colLetter = STATUS_COL[tab] ?? "G";
+      const vals = await client.getValues(`${tab}!${colLetter}2:${colLetter}`);
+      col = vals.map((r) => (r[0] ?? "").trim());
+      cache.set(tab, col);
+    }
+    return col[rowNum - 2] ?? null;
+  };
+}
+
+export { ok, err, checkSameOrigin, serverError };

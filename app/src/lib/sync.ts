@@ -1,4 +1,4 @@
-// Định nghĩa 15 tab + ánh xạ cột -> UnifiedLine.
+// Định nghĩa 13 tab đồng bộ + ánh xạ cột -> UnifiedLine.
 // Sync worker đọc header ĐỘNG theo tên cột (không theo index cứng) để chịu được
 // việc thêm cột / đổi thứ tự trên Sheets.
 

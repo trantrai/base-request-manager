@@ -49,7 +49,7 @@ a:hover { text-decoration: underline; }
 }
 .nav a:hover { background: rgba(255,255,255,.08); text-decoration: none; color: #fff; }
 .nav a.active { background: rgba(255,255,255,.14); color: #fff; font-weight: 600; }
-.nav .sep { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: #7e93b3; padding: 12px 12px 4px; }
+.nav .sep { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: #a9bedb; padding: 12px 12px 4px; } /* N13: sáng hơn để đạt 4.5:1 trên nền navy */
 
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .topbar {
@@ -103,10 +103,10 @@ table.grid tr:hover td { background: #f8fafc; }
   padding: 2px 8px; border-radius: 999px; border: 1px solid; white-space: nowrap;
 }
 .chip-cho_xu_ly { background: var(--gold-tint); border-color: var(--gold); color: #7a5b00; }
-.chip-loi { background: var(--coral-tint); border-color: var(--coral); color: var(--coral); }
+.chip-loi { background: var(--coral-tint); border-color: var(--coral); color: #a93a1a; } /* N13: đậm hơn để đạt 4.5:1 */
 .chip-chuyen_xu_ly { background: #eef2ff; border-color: #93a4d4; color: #3b4a7a; }
 .chip-hoan_tat { background: var(--navy-tint); border-color: var(--navy); color: var(--navy); }
-.chip-da_go { background: #f1f3f6; border-color: var(--gray); color: var(--gray); }
+.chip-da_go { background: #f1f3f6; border-color: var(--gray); color: #5b6572; } /* N13: đậm hơn để đạt 4.5:1 */
 .chip-da_duyet { background: #e6f4ea; border-color: #5aa469; color: #2f6b3c; }
 .chip-khac { background: #f1f3f6; border-color: var(--border); color: var(--muted); }
 
@@ -144,7 +144,7 @@ label.f { display: block; font-size: 12px; font-weight: 600; color: var(--muted)
   display: flex; flex-direction: column; box-shadow: 0 12px 40px rgba(0,0,0,.25);
 }
 .palette input { border: none; border-bottom: 1px solid var(--border); padding: 14px 16px; font-size: 15px; border-radius: 8px 8px 0 0; }
-.palette input:focus { outline: none; }
+.palette input:focus { outline: 2px solid var(--navy); outline-offset: -2px; } /* N17: giữ chỉ báo focus rõ ràng */
 .palette .results { overflow-y: auto; }
 .palette .row { padding: 10px 16px; cursor: pointer; border-bottom: 1px solid var(--border); display: flex; gap: 10px; align-items: center; }
 .palette .row:hover, .palette .row.sel { background: var(--navy-tint); }

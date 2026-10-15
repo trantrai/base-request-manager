@@ -4,7 +4,10 @@ export function toCsv(rows: Record<string, unknown>[]): string {
   if (rows.length === 0) return "";
   const headers = Object.keys(rows[0]);
   const esc = (v: unknown): string => {
-    const s = v === null || v === undefined ? "" : String(v);
+    let s = v === null || v === undefined ? "" : String(v);
+    // N5: chống CSV formula injection — ô bắt đầu bằng = + - @ sẽ bị Excel
+    // thực thi công thức. Thêm tiền tố ' để ép thành text (hiển thị đúng).
+    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
     return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const lines = [headers.map(esc).join(",")];

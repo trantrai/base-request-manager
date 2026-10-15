@@ -31,11 +31,15 @@ export function getOverview(): OverviewKpi {
        FROM unified_lines GROUP BY tab ORDER BY pending DESC`
     )
     .all() as { tab: string; total: number; pending: number }[];
+  // M8: cột company lẫn nhiều giá trị rác/template ("(trống)", "String",
+  // "Chọn Công ty Laria hoặc Reunion", "THE FARMERS"...). Quyết định: dashboard
+  // chỉ phân biệt LARIA / REUNION, còn lại gom vào "(khác)" — không xoá dữ liệu gốc.
   const byCompany = db
     .prepare(
-      `SELECT COALESCE(NULLIF(company,''),'(trống)') company, COUNT(*) total,
+      `SELECT CASE WHEN company IN ('LARIA','REUNION') THEN company ELSE '(khác)' END AS company,
+        COUNT(*) total,
         SUM(CASE WHEN status_norm IN ('cho_xu_ly','loi','chuyen_xu_ly','da_duyet') THEN 1 ELSE 0 END) pending
-       FROM unified_lines GROUP BY company ORDER BY pending DESC`
+       FROM unified_lines GROUP BY 1 ORDER BY pending DESC`
     )
     .all() as { company: string; total: number; pending: number }[];
   return { total, pending, byNorm, byTab, byCompany };
@@ -48,20 +52,36 @@ export interface PendingFilter {
   q?: string;
   page?: number;
   pageSize?: number;
+  /** M2: cho phép export vượt trần 200 dòng (tối đa 5000) */
+  unlimited?: boolean;
+}
+
+/** N7: escape ký tự đặc biệt trong LIKE (% _ \) để tìm "%" không match tất cả. */
+export function escapeLike(s: string): string {
+  return s.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
+
+/** Chuẩn hoá số nguyên dương — chống NaN từ query string (N6). */
+function toPositiveInt(v: unknown, def: number): number {
+  const n = typeof v === "number" ? v : Number(v);
+  if (!Number.isFinite(n) || n < 1) return def;
+  return Math.floor(n);
 }
 
 export function getPending(f: PendingFilter) {
   const db = getDb();
-  const page = Math.max(1, f.page ?? 1);
-  const pageSize = Math.min(200, Math.max(1, f.pageSize ?? 50));
+  const page = toPositiveInt(f.page, 1);
+  // M2: export được phép tới 5000; UI thường vẫn kẹp 200
+  const cap = f.unlimited ? 5000 : 200;
+  const pageSize = Math.min(cap, toPositiveInt(f.pageSize, 50));
   const where: string[] = ["status_norm IN ('cho_xu_ly','loi','chuyen_xu_ly','da_duyet')"];
   const params: unknown[] = [];
   if (f.tab) { where.push("tab = ?"); params.push(f.tab); }
   if (f.status) { where.push("status_norm = ?"); params.push(f.status); }
   if (f.company) { where.push("company = ?"); params.push(f.company); }
   if (f.q) {
-    where.push("(item_code LIKE ? OR request_name LIKE ? OR request_id LIKE ? OR sync_note LIKE ?)");
-    const q = `%${f.q}%`;
+    where.push("(item_code LIKE ? ESCAPE '\\' OR request_name LIKE ? ESCAPE '\\' OR request_id LIKE ? ESCAPE '\\' OR sync_note LIKE ? ESCAPE '\\')");
+    const q = `%${escapeLike(f.q)}%`;
     params.push(q, q, q, q);
   }
   const w = where.join(" AND ");
@@ -106,12 +126,12 @@ export function getRequestDetail(requestId: string) {
 
 export function searchGlobal(q: string, limit = 30) {
   const db = getDb();
-  const like = `%${q}%`;
+  const like = `%${escapeLike(q)}%`;
   return db
     .prepare(
       `SELECT id, tab, key_row, request_id, request_name, status_norm, company, item_code
        FROM unified_lines
-       WHERE item_code LIKE ? OR request_name LIKE ? OR request_id LIKE ? OR key_row LIKE ?
+       WHERE item_code LIKE ? ESCAPE '\\' OR request_name LIKE ? ESCAPE '\\' OR request_id LIKE ? ESCAPE '\\' OR key_row LIKE ? ESCAPE '\\'
        ORDER BY CASE WHEN status_norm IN ('cho_xu_ly','loi') THEN 0 ELSE 1 END, tab
        LIMIT ?`
     )
@@ -127,6 +147,33 @@ export function getSyncStatus() {
     .prepare("SELECT * FROM sync_runs ORDER BY id DESC LIMIT 10")
     .all();
   return { last, history };
+}
+
+export class SyncConflictError extends Error {}
+
+export const SYNC_TIMEOUT_MIN = 30;
+
+/**
+ * M7: chặn 2 lần sync chạy chồng nhau (bấm tay + Task Scheduler).
+ * - Có run 'running' trong 30 phút gần nhất -> ném SyncConflictError.
+ * - Run 'running' quá 30 phút -> coi như kẹt (crash), đánh dấu 'stale' và cho chạy tiếp.
+ */
+export function checkSyncLock(timeoutMin = SYNC_TIMEOUT_MIN): void {
+  const db = getDb();
+  const running = db
+    .prepare("SELECT id, started_at FROM sync_runs WHERE status='running' ORDER BY id DESC LIMIT 1")
+    .get() as { id: number; started_at: string } | undefined;
+  if (!running) return;
+  const startedMs = Date.parse((running.started_at || "").replace(" ", "T") + "Z");
+  const ageMin = (Date.now() - startedMs) / 60000;
+  if (ageMin < timeoutMin) {
+    throw new SyncConflictError(
+      `Đang có một tiến trình đồng bộ chạy (bắt đầu lúc ${running.started_at}). Vui lòng đợi xong rồi thử lại.`
+    );
+  }
+  db.prepare(
+    `UPDATE sync_runs SET status='stale', error='Quá ${timeoutMin} phút không xong — coi như kẹt, cho phép chạy lại.' WHERE id=?`
+  ).run(running.id);
 }
 
 export function getStatusMap() {

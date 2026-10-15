@@ -16,4 +16,13 @@ describe("toCsv", () => {
     expect(out.replace(/^\uFEFF/, "").split("\r\n")[0]).toBe("a,b");
     expect(toCsv([])).toBe("");
   });
+  it("N5: chống CSV formula injection — ô bắt đầu = + - @ được prefix '", () => {
+    const out = toCsv([{ a: "=1+1", b: "-5", c: "@x", d: "+cmd", e: "bình thường" }]);
+    const body = out.replace(/^\uFEFF/, "").split("\r\n")[1];
+    expect(body).toBe("'=1+1,'-5,'@x,'+cmd,bình thường");
+  });
+  it("N5: ô có dấu phẩy vẫn quote đúng sau khi prefix", () => {
+    const out = toCsv([{ a: "=HYPERLINK(\"x\")" }]);
+    expect(out).toContain("\"'=HYPERLINK(\"\"x\"\")\"");
+  });
 });

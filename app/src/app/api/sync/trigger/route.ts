@@ -3,14 +3,25 @@ export const dynamic = "force-dynamic";
 // Chạy sync tay: đọc 15 tab từ Sheets API -> transform -> upsert SQLite.
 // Yêu cầu đã cấu hình Sheets credential trong Settings.
 
-import { ok, err } from "@/lib/api";
+import { ok, err, checkSameOrigin, serverError } from "@/lib/api";
 import { getDb } from "@/lib/db";
-import { getSettings, audit } from "@/lib/queries";
+import { getSettings, audit, checkSyncLock, SyncConflictError } from "@/lib/queries";
+import { getSecret } from "@/lib/secrets";
 import { SheetsClient } from "@/lib/sheets";
 import { TAB_NAMES } from "@/lib/sync";
 import { transformRows } from "@/lib/syncEngine";
 
-export async function POST() {
+export async function POST(req: Request) {
+  if (!checkSameOrigin(req)) return err("Yêu cầu không hợp lệ.", 403);
+  try {
+    return await runSync();
+  } catch (e) {
+    // N4: không lộ chi tiết nội bộ cho client
+    return serverError(e, "Đồng bộ thất bại. Vui lòng thử lại.");
+  }
+}
+
+async function runSync() {
   const s = getSettings();
   const spreadsheetId = (s["spreadsheetId"] as string) || "1bfSU5RQ2FZccs4rea8WrxKSyW0HsP7ntuOuL67rATw0";
   const authType = (s["sheetsAuthType"] as string) || "";
@@ -18,14 +29,23 @@ export async function POST() {
     return err("Chưa cấu hình kết nối Google Sheets. Vào trang Cài đặt để nhập API key hoặc service account.", 400);
   }
   const client = new SheetsClient(spreadsheetId, authType === "api_key"
-    ? { type: "api_key", apiKey: s["sheetsApiKey"] as string }
+    ? { type: "api_key", apiKey: getSecret("sheetsApiKey") }
     : {
         type: "service_account",
         saEmail: s["sheetsSaEmail"] as string,
-        saPrivateKey: (s["sheetsSaKey"] as string)?.replace(/\\n/g, "\n"),
+        saPrivateKey: (getSecret("sheetsSaKey") ?? "")?.replace(/\\n/g, "\n"),
       });
 
   const db = getDb();
+
+  // M7: chống 2 lần sync chạy chồng nhau — logic chi tiết trong queries.checkSyncLock
+  try {
+    checkSyncLock();
+  } catch (e) {
+    if (e instanceof SyncConflictError) return err(e.message, 409);
+    throw e;
+  }
+
   const t0 = Date.now();
   const runId = (db.prepare("INSERT INTO sync_runs(status) VALUES ('running')").run().lastInsertRowid as number);
   let tabsOk = 0, tabsFail = 0, rowsRead = 0, rowsUpserted = 0, rowsJunk = 0;

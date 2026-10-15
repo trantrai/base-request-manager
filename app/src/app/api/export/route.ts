@@ -24,10 +24,11 @@ export async function GET(req: Request) {
     company: u.searchParams.get("company") ?? undefined,
     q: u.searchParams.get("q") ?? undefined,
     page: 1,
-    pageSize: 200,
+    pageSize: 5000,
+    unlimited: true, // M2: export lấy tới 5000 dòng, không kẹp 200 như UI
   });
   // export tối đa 5000 dòng đầu để file không quá nặng
-  const limited = (rows as Record<string, unknown>[]).slice(0, 5000).map((r) => ({
+  const limited = (rows as Record<string, unknown>[]).map((r) => ({
     tab: r["tab"], key_row: r["key_row"], item_code: r["item_code"],
     created_on: r["created_on"], request_id: r["request_id"], request_name: r["request_name"],
     status_raw: r["status_raw"], status_norm: r["status_norm"],

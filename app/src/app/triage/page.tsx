@@ -38,7 +38,8 @@ function TriageInner() {
     } finally { setLoading(false); }
   };
 
-  useEffect(() => { load(1); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  // N9: load() chỉ cần chạy 1 lần khi mount — không đưa vào deps để tránh loop.
+  useEffect(() => { load(1); /* eslint-disable-next-line react-hooks/exhaustive-deps -- chỉ chạy 1 lần lúc mount, xem N9 */ }, []);
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / 50)) : 1;
 

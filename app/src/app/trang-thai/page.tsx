@@ -64,7 +64,7 @@ export default function TrangThaiPage() {
           <button className="btn" disabled={busy} onClick={trigger}>
             {busy ? "Đang đồng bộ…" : "Đồng bộ ngay"}
           </button>
-          <p className="small muted">Đồng bộ đọc 15 tab từ Google Sheets (cần cấu hình credential trong Cài đặt). Mặc định 20 phút/lần khi chạy kèm scheduler.</p>
+          <p className="small muted">Đồng bộ đọc 13 tab từ Google Sheets (cần cấu hình credential trong Cài đặt). Mặc định 20 phút/lần khi chạy kèm scheduler.</p>
         </div>
       </div>
 

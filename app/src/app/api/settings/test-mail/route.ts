@@ -1,11 +1,12 @@
 export const dynamic = "force-dynamic";
 
-import { ok, err } from "@/lib/api";
+import { ok, err, checkSameOrigin, serverError } from "@/lib/api";
 import { getSettings } from "@/lib/queries";
 import { sendAlert } from "@/lib/mail";
 
 /** Gửi email kiểm tra cấu hình SMTP. */
-export async function POST() {
+export async function POST(req: Request) {
+  if (!checkSameOrigin(req)) return err("Yêu cầu không hợp lệ.", 403);
   const s = getSettings();
   const to = (s["alertTo"] as string) || "";
   if (!to) return err("Chưa nhập địa chỉ email nhận cảnh báo.", 400);
@@ -17,6 +18,6 @@ export async function POST() {
     });
     return ok({ sent: true, to });
   } catch (e) {
-    return err(e instanceof Error ? e.message : String(e), 500);
+    return serverError(e, "Gửi email kiểm tra thất bại. Kiểm tra lại cấu hình SMTP.");
   }
 }

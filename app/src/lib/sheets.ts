@@ -18,6 +18,25 @@ function b64url(input: Buffer | string): string {
   return b.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
+const FETCH_TIMEOUT_MS = 30000;
+
+/** N2: fetch với timeout 30s — tránh sync treo khi mạng đứng (kẹt sync_runs ở 'running'). */
+async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: ctl.signal });
+  } catch (e) {
+    if ((e as Error).name === "AbortError") {
+      throw new Error(`Hết thời gian chờ (30s) khi gọi Google API: ${url.split("?")[0]}`);
+      // (review) không log query string — với auth api_key, query chứa ?key=<APIKEY>.
+    }
+    throw e;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 async function getServiceAccountToken(saEmail: string, saPrivateKey: string): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   const header = b64url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
@@ -35,7 +54,7 @@ async function getServiceAccountToken(saEmail: string, saPrivateKey: string): Pr
   const signer = crypto.createSign("RSA-SHA256");
   signer.update(unsigned);
   const sig = b64url(signer.sign(saPrivateKey));
-  const res = await fetch("https://oauth2.googleapis.com/token", {
+  const res = await fetchWithTimeout("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: `grant_type=${encodeURIComponent("urn:ietf:params:oauth:grant-type:jwt-bearer")}&assertion=${encodeURIComponent(`${unsigned}.${sig}`)}`,
@@ -67,7 +86,7 @@ export class SheetsClient {
     const url =
       `https://sheets.googleapis.com/v4/spreadsheets/${this.spreadsheetId}/values/${encodeURIComponent(range)}` +
       `${this.keyParam()}${this.auth.type === "api_key" ? "" : ""}`;
-    const res = await fetch(url, { headers: await this.headers() });
+    const res = await fetchWithTimeout(url, { headers: await this.headers() });
     if (!res.ok) {
       const body = await res.text();
       throw new Error(`Sheets values.get thất bại (${range}): HTTP ${res.status} — ${body.slice(0, 200)}`);
@@ -85,7 +104,7 @@ export class SheetsClient {
       throw new Error("Ghi lên Sheets yêu cầu service account (API key chỉ đọc được).");
     }
     const url = `https://sheets.googleapis.com/v4/spreadsheets/${this.spreadsheetId}/values:batchUpdate`;
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       method: "POST",
       headers: { ...(await this.headers()), "Content-Type": "application/json" },
       body: JSON.stringify({

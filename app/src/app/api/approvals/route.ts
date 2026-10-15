@@ -1,8 +1,10 @@
 export const dynamic = "force-dynamic";
 
-import { ok, err } from "@/lib/api";
-import { getDb } from "@/lib/db";
-import { listApprovals, autoDetect, audit } from "@/lib/approvals";
+import { ok, err, checkSameOrigin } from "@/lib/api";
+import {
+  listApprovals, autoDetect, decideApproval,
+  ApprovalNotFoundError, ApprovalNotProposedError,
+} from "@/lib/approvals";
 import { z } from "zod";
 
 export async function GET(req: Request) {
@@ -19,6 +21,7 @@ const DecideSchema = z.object({
 });
 
 export async function POST(req: Request) {
+  if (!checkSameOrigin(req)) return err("Yêu cầu không hợp lệ.", 403);
   const body = await req.json().catch(() => ({}));
   // auto-detect ứng viên dọn dẹp
   if (body.action === "detect") {
@@ -27,11 +30,12 @@ export async function POST(req: Request) {
   const parsed = DecideSchema.safeParse(body);
   if (!parsed.success) return err("Dữ liệu không hợp lệ.", 400);
   const { id, state, decidedBy, note } = parsed.data;
-  const db = getDb();
-  const row = db.prepare("SELECT id FROM approvals WHERE id=?").get(id);
-  if (!row) return err("Không tìm thấy đề xuất.", 404);
-  db.prepare("UPDATE approvals SET state=?, decided_by=?, decided_at=datetime('now'), note=? WHERE id=?")
-    .run(state, decidedBy, note, id);
-  audit(decidedBy, `approval_${state}`, { id });
+  try {
+    decideApproval(id, state, decidedBy, note);
+  } catch (e) {
+    if (e instanceof ApprovalNotFoundError) return err(e.message, 404);
+    if (e instanceof ApprovalNotProposedError) return err(e.message, 409);
+    throw e;
+  }
   return ok({ id, state });
 }

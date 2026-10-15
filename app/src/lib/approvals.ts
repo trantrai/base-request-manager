@@ -61,8 +61,45 @@ export function listApprovals(state?: string) {
     .all(...params);
 }
 
+export class ApprovalNotFoundError extends Error {}
+export class ApprovalNotProposedError extends Error {}
+
+/**
+ * M4: duyệt/từ chối 1 đề xuất — CHỈ khi còn ở trạng thái 'proposed'.
+ * Chặn lật applied -> approved rồi apply lại gây ghi trùng lên Sheets.
+ */
+export function decideApproval(
+  id: number,
+  state: "approved" | "rejected",
+  decidedBy: string,
+  note = "",
+): void {
+  const db = getDb();
+  const upd = db
+    .prepare(
+      "UPDATE approvals SET state=?, decided_by=?, decided_at=datetime('now'), note=? WHERE id=? AND state='proposed'"
+    )
+    .run(state, decidedBy, note, id);
+  if (upd.changes === 0) {
+    const exists = db.prepare("SELECT id FROM approvals WHERE id=?").get(id);
+    if (!exists) throw new ApprovalNotFoundError(`Không tìm thấy đề xuất #${id}.`);
+    throw new ApprovalNotProposedError(
+      "Đề xuất không còn ở trạng thái chờ duyệt (có thể đã được xử lý). Hãy tải lại danh sách."
+    );
+  }
+  audit(decidedBy, `approval_${state}`, { id });
+}
+
+/**
+ * M3: chốt tập approvalIds đúng lúc bấm "Xem trước" — pure helper để test.
+ * Nút "Áp dụng" phải dùng snapshot này, không dùng checkbox hiện tại.
+ */
+export function snapshotIds(ids: Iterable<number>): number[] {
+  return Array.from(new Set(ids));
+}
+
 /** Cột status của từng tab trên Sheets (để dựng sheetRange khi apply). */
-const STATUS_COL: Record<string, string> = {
+export const STATUS_COL: Record<string, string> = {
   CreateItem: "G", UpdateItem: "H", UpdatePrice: "G", UpdatePriceMua: "G",
   UpdatePriceBan: "G", CreateCom_Bom: "G", ItemCom_Bom_D: "C",
   UpdateStatus: "G", UpdateCOGS: "G", Warehouse: "D", JournalEntry: "D",
@@ -104,13 +141,17 @@ export interface ApplyResult {
 
 /**
  * Áp dụng 1 đợt write-back. Mỗi item: resolve dòng thật trên Sheets bằng
- * MATCH key_row ở cột A, rồi batchUpdate ô status.
+ * MATCH key_row ở cột A, kiểm tra TOCTOU (M5), rồi gom 1 batchUpdate duy nhất (N3).
+ *
+ * readStatus(tab, rowNum): đọc giá trị hiện tại của ô status — nếu khác oldValue
+ * lúc preview thì SKIP + log 'mismatch' thay vì ghi đè (sheet còn automation ghi song song).
  */
 export async function applyBatch(
   items: WritebackItem[],
   opts: { confirmed: boolean; appliedBy: string },
   sheets: SheetsClient,
   resolveRow: (tab: string, keyRow: string) => Promise<number | null>,
+  readStatus?: (tab: string, rowNum: number) => Promise<string | null>,
 ): Promise<ApplyResult> {
   const db = getDb();
   const v = validateWritebackBatch(items, { writeMode: isWriteMode(), confirmed: opts.confirmed });
@@ -127,20 +168,54 @@ export async function applyBatch(
   );
   const markApproval = db.prepare("UPDATE approvals SET state='applied', decided_at=datetime('now') WHERE id=?");
 
+  // B1: resolve + kiểm tra TOCTOU từng dòng
+  const verified: { p: (typeof preview)[number]; range: string }[] = [];
   for (const p of preview) {
     try {
       const rowNum = await resolveRow(p.tab, p.keyRow);
       if (!rowNum) throw new Error(`Không tìm thấy key_row trên Sheets (tab ${p.tab})`);
       const col = STATUS_COL[p.tab] ?? "G";
       const range = `${p.tab}!${col}${rowNum}`;
-      await sheets.batchUpdate([{ range, value: p.newValue }]);
-      ins.run(batchId, p.approvalId, p.tab, p.keyRow, range, p.field, p.oldValue, p.newValue, "applied", opts.appliedBy, "");
-      markApproval.run(p.approvalId);
-      applied++;
+      if (readStatus) {
+        const cur = await readStatus(p.tab, rowNum);
+        // (review) fail-safe: không đọc được ô status (cur === null) thì KHÔNG ghi mù —
+        // bỏ qua dòng này thay vì coi như "không có gì để check".
+        if (cur === null) {
+          const msg = `Không đọc được ô ${range} để kiểm tra — bỏ qua để tránh ghi đè mù.`;
+          failed.push({ keyRow: p.keyRow, error: msg });
+          ins.run(batchId, p.approvalId, p.tab, p.keyRow, range, p.field, p.oldValue, p.newValue, "unknown", opts.appliedBy, msg);
+          continue;
+        }
+        if (cur !== p.oldValue) {
+          const msg = `Ô ${range} đã bị đổi từ lúc preview (hiện "${cur}", lúc duyệt "${p.oldValue}") — bỏ qua để tránh ghi đè.`;
+          failed.push({ keyRow: p.keyRow, error: msg });
+          ins.run(batchId, p.approvalId, p.tab, p.keyRow, range, p.field, p.oldValue, p.newValue, "mismatch", opts.appliedBy, msg);
+          continue;
+        }
+      }
+      verified.push({ p, range });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       failed.push({ keyRow: p.keyRow, error: msg });
       ins.run(batchId, p.approvalId, p.tab, p.keyRow, p.sheetRange, p.field, p.oldValue, p.newValue, "failed", opts.appliedBy, msg);
+    }
+  }
+
+  // B2: N3 — 1 batchUpdate duy nhất cho cả đợt (thay vì N lần gọi API)
+  if (verified.length > 0) {
+    try {
+      await sheets.batchUpdate(verified.map(({ p, range }) => ({ range, value: p.newValue })));
+      for (const { p, range } of verified) {
+        ins.run(batchId, p.approvalId, p.tab, p.keyRow, range, p.field, p.oldValue, p.newValue, "applied", opts.appliedBy, "");
+        markApproval.run(p.approvalId);
+        applied++;
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      for (const { p, range } of verified) {
+        failed.push({ keyRow: p.keyRow, error: msg });
+        ins.run(batchId, p.approvalId, p.tab, p.keyRow, range, p.field, p.oldValue, p.newValue, "failed", opts.appliedBy, msg);
+      }
     }
   }
   audit(opts.appliedBy, "writeback_apply", { batchId, applied, failed: failed.length });

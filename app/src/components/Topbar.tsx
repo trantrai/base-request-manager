@@ -21,6 +21,8 @@ export function Topbar() {
   const [rows, setRows] = useState<SearchRow[]>([]);
   const [writeMode, setWriteMode] = useState(false);
   const [syncAt, setSyncAt] = useState("");
+  // N15: điều hướng kết quả bằng phím mũi tên
+  const [activeIdx, setActiveIdx] = useState(0);
   const router = useRouter();
 
   const refreshMeta = useCallback(async () => {
@@ -50,15 +52,33 @@ export function Topbar() {
   useEffect(() => {
     if (!open || q.trim().length < 2) { setRows([]); return; }
     const t = setTimeout(async () => {
-      try { setRows(await api<SearchRow[]>(`/api/search?q=${encodeURIComponent(q.trim())}`)); }
+      try {
+        const r = await api<SearchRow[]>(`/api/search?q=${encodeURIComponent(q.trim())}`);
+        setRows(r);
+        setActiveIdx(0);
+      }
       catch { setRows([]); }
     }, 200);
     return () => clearTimeout(t);
   }, [q, open]);
 
   const goRequest = (requestId: string) => {
-    setOpen(false); setQ("");
+    setOpen(false); setQ(""); setRows([]);
     router.push(`/requests/${encodeURIComponent(requestId)}`);
+  };
+
+  // N15: Enter đi tới kết quả đang chọn, ↑/↓ di chuyển
+  const onPaletteKey = (e: React.KeyboardEvent) => {
+    if (e.key === "ArrowDown" && rows.length > 0) {
+      e.preventDefault();
+      setActiveIdx((i) => Math.min(rows.length - 1, i + 1));
+    } else if (e.key === "ArrowUp" && rows.length > 0) {
+      e.preventDefault();
+      setActiveIdx((i) => Math.max(0, i - 1));
+    } else if (e.key === "Enter" && rows.length > 0) {
+      const r = rows[activeIdx] ?? rows[0];
+      goRequest(r.request_id || r.key_row);
+    }
   };
 
   return (
@@ -74,23 +94,30 @@ export function Topbar() {
       </header>
       {open && (
         <div className="palette-overlay" onClick={() => setOpen(false)}>
-          <div className="palette" onClick={(e) => e.stopPropagation()}>
+          {/* N15/N16: dialog có role + label, kết quả là button điều hướng được bằng bàn phím */}
+          <div className="palette" role="dialog" aria-modal="true" aria-label="Tìm kiếm toàn cục"
+            onClick={(e) => e.stopPropagation()}>
             <input
               autoFocus
+              aria-label="Tìm kiếm mã hàng, tên hàng, RequestId, tên request"
               placeholder="Mã hàng, tên hàng, RequestId, tên request… (gõ ít nhất 2 ký tự)"
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && rows.length > 0) goRequest(rows[0].request_id || rows[0].key_row); }}
+              onKeyDown={onPaletteKey}
             />
-            <div className="results">
-              {rows.map((r) => (
-                <div key={r.id} className="row" onClick={() => goRequest(r.request_id || r.key_row)}>
+            <div className="results" role="listbox" aria-label="Kết quả tìm kiếm">
+              {rows.map((r, i) => (
+                <button key={r.id} role="option" aria-selected={i === activeIdx}
+                  className={`row${i === activeIdx ? " sel" : ""}`}
+                  style={{ width: "100%", textAlign: "left", background: "none", border: "none", font: "inherit" }}
+                  onClick={() => goRequest(r.request_id || r.key_row)}
+                  onMouseEnter={() => setActiveIdx(i)}>
                   <span className="mono">{r.item_code || r.key_row}</span>
                   <span className="small muted">{r.tab}</span>
                   <span className="small" style={{ marginLeft: "auto" }}>
                     {(r.request_name || "").slice(0, 60)}
                   </span>
-                </div>
+                </button>
               ))}
               {q.trim().length >= 2 && rows.length === 0 && (
                 <div className="empty">Không tìm thấy — thử từ khóa khác.</div>

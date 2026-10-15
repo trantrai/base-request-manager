@@ -3,6 +3,8 @@
 
 import nodemailer from "nodemailer";
 import { getDb } from "./db";
+import { getSettings } from "./queries";
+import { getSecret } from "./secrets";
 
 interface SmtpCfg {
   host: string;
@@ -12,15 +14,19 @@ interface SmtpCfg {
   from: string;
 }
 
+/** M1: đọc từ các key riêng (smtpHost/smtpPort/...) — key 'smtp' gộp không tồn tại. */
 export function getSmtpConfig(): SmtpCfg | null {
-  const db = getDb();
-  const row = db.prepare("SELECT value_json FROM settings WHERE key='smtp'").get() as
-    | { value_json: string }
-    | undefined;
-  if (!row) return null;
-  const cfg = JSON.parse(row.value_json) as SmtpCfg;
-  if (!cfg.host || !cfg.from) return null;
-  return cfg;
+  const s = getSettings();
+  const host = (s["smtpHost"] as string) || "";
+  const from = (s["smtpFrom"] as string) || "";
+  if (!host || !from) return null;
+  return {
+    host,
+    port: Number(s["smtpPort"]) || 587,
+    user: (s["smtpUser"] as string) || "",
+    pass: getSecret("smtpPass") || "",
+    from,
+  };
 }
 
 export interface AlertMail {

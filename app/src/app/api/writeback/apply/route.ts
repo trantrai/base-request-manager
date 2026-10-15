@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 
 import { z } from "zod";
-import { ok, err, sheetsClientOrThrow, makeRowResolver } from "@/lib/writebackApi";
+import { ok, err, checkSameOrigin, serverError, sheetsClientOrThrow, makeRowResolver, makeStatusReader } from "@/lib/writebackApi";
 import { buildWritebackItems, applyBatch } from "@/lib/approvals";
 import { isWriteMode } from "@/lib/queries";
 
@@ -13,6 +13,7 @@ const Schema = z.object({
 
 /** Áp dụng đợt đã duyệt — chỉ khi write_mode bật + đã xác nhận. */
 export async function POST(req: Request) {
+  if (!checkSameOrigin(req)) return err("Yêu cầu không hợp lệ.", 403);
   if (!isWriteMode()) return err("Ứng dụng đang ở chế độ chỉ-đọc (write_mode tắt).", 403);
   const body = Schema.safeParse(await req.json().catch(() => ({})));
   if (!body.success) return err("Thiếu xác nhận. Hãy xem trước thay đổi và xác nhận trước khi áp dụng.", 400);
@@ -24,9 +25,10 @@ export async function POST(req: Request) {
       { confirmed: true, appliedBy: body.data.appliedBy },
       client,
       await makeRowResolver(client),
+      makeStatusReader(client), // M5: kiểm tra TOCTOU trước khi ghi
     );
     return ok(result);
   } catch (e) {
-    return err(e instanceof Error ? e.message : String(e), 500);
+    return serverError(e, "Áp dụng thất bại. Vui lòng thử lại.");
   }
 }

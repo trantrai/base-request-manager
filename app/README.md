@@ -11,7 +11,11 @@ Approval Queue (quét ứng viên dọn dẹp → duyệt từng dòng → xem t
 
 ## Yêu cầu
 
-- **Node.js 20+** (khuyên 20.18 LTS) — kiểm tra: `node --version`
+- **Node.js 20 LTS** (khuyên 20.18.x) — kiểm tra: `node --version`
+  > ⚠️ Dùng đúng Node 20 LTS, **không dùng Node 24**: better-sqlite3 12.x crash gián đoạn
+  > (SIGABRT, exit 134) trên Node 24.19+ do xung đột native teardown
+  > (`Statement::~Statement` → `RemoveEnvironmentCleanupHook` assertion) — lỗi đã biết của
+  > upstream (nodejs/node#65446), không liên quan tới code app.
 - Không cần Docker, không cần database server (dùng SQLite file local).
 
 ## Chạy trên Windows (máy anh Trải)
@@ -23,7 +27,7 @@ Approval Queue (quét ứng viên dọn dẹp → duyệt từng dòng → xem t
 ```powershell
 cd D:\TRAI\basescope        # thư mục giải nén
 npm install --no-audit --no-fund
-npm run build
+npm run build               # = next build + copy .next/static vào standalone (B1)
 npm run seed               # nạp dữ liệu mẫu (snapshot 15/10/2026) — chỉ lần đầu
 node .next\standalone\server.js
 # mở trình duyệt: http://localhost:3000
@@ -31,6 +35,10 @@ node .next\standalone\server.js
 
 > Lưu ý: **không** chạy `npm run dev` để dùng lâu dài (dev mode chậm, chỉ để phát triển).
 > File database nằm tại `data\basescope.db` — copy file này là backup toàn bộ.
+> **Sao lưu cả file key máy** `%APPDATA%\BaseScope\machine.key` cùng với `.db`: nếu mất file key,
+> mọi secret đã mã hoá (Sheets API key, service account, SMTP password) không giải mã được
+> và phải nhập lại credential trong trang Cài đặt.
+> Server chỉ nghe trên localhost (`127.0.0.1`) — không mở ra mạng LAN vì API chưa có đăng nhập (B2).
 
 ## Cấu hình kết nối Google Sheets (để Đồng bộ)
 
@@ -78,6 +86,9 @@ data/             # basescope.db (tạo bởi seed)
 
 ## An toàn dữ liệu
 
-- Credential **không** hardcode — nằm trong DB local (`data/basescope.db`, bảng `settings`).
+- Credential **không** hardcode — nằm trong DB local (`data/basescope.db`, bảng `settings`),
+  các secret (API key, service account private key, SMTP password) được **mã hoá AES-256-GCM**
+  bằng key máy lưu ngoài app (`%APPDATA%\BaseScope\machine.key` trên Windows) — M6.
+  Không commit file `.db` và `machine.key` lên git.
 - Mọi lần ghi lên Sheets đều qua preview + xác nhận + `apply_log` + rollback theo đợt.
 - Không bao giờ `DELETE` bảng `apply_log`.

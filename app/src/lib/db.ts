@@ -5,10 +5,15 @@ import path from "path";
 import fs from "fs";
 import { SCHEMA_SQL } from "./schema";
 import { STATUS_MAP, STATUS_MAP_VERSION } from "./normalize";
+import { migratePlaintextSecrets } from "./secrets";
 
 let _db: Database.Database | null = null;
+let _secretsMigrated = false;
 
 export function dbPath(): string {
+  // BASESCOPE_DB cho phép override đường dẫn DB (dùng trong test để cô lập).
+  const override = process.env.BASESCOPE_DB;
+  if (override) return override;
   const dir = path.join(process.cwd(), "data");
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return path.join(dir, "basescope.db");
@@ -31,6 +36,16 @@ export function getDb(dbFile?: string): Database.Database {
     for (const e of STATUS_MAP) upsert.run(e);
   });
   tx();
+  if (!_secretsMigrated) {
+    // M6: migrate secret plaintext cũ sang AES-256-GCM (idempotent, chạy 1 lần/process).
+    // An toàn với circular import db <-> secrets vì cả hai chỉ dùng nhau trong thân hàm.
+    _secretsMigrated = true;
+    try {
+      migratePlaintextSecrets();
+    } catch (e) {
+      console.error("[secrets] migrate thất bại:", e);
+    }
+  }
   if (!dbFile) _db = db;
   return db;
 }

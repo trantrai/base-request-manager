@@ -131,6 +131,12 @@ export default function CaiDatPage() {
             </>
           )}
           <p className="small muted">Xem hướng dẫn lấy credential trong <code className="inline">HUONG-DAN-CREDENTIAL.md</code>.</p>
+          <div className="alert alert-info" style={{ marginTop: 12 }}>
+            <b>Bảo mật (M6):</b> API key, private key và SMTP password được mã hoá AES-256-GCM
+            bằng key máy (<code className="inline">machine.key</code> ngoài thư mục app) trước khi lưu vào database.
+            Dù vậy, file <code className="inline">data/basescope.db</code> vẫn cần được bảo vệ —
+            không gửi/đính kèm lung tung, không commit lên git.
+          </div>
         </div>
       </div>
 

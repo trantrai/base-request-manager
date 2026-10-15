@@ -35,11 +35,16 @@ export default function PheDuyetPage() {
   const [rows, setRows] = useState<Approval[]>([]);
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [preview, setPreview] = useState<PreviewRow[] | null>(null);
+  // M3: snapshot tập approvalIds đúng lúc bấm "Xem trước" — nút "Áp dụng"
+  // dùng snapshot này, không dùng checkbox hiện tại (user có thể tích thêm/bớt sau preview).
+  const [previewIds, setPreviewIds] = useState<number[] | null>(null);
   const [confirmText, setConfirmText] = useState("");
   const [batches, setBatches] = useState<BatchSummary[]>([]);
   const [msg, setMsg] = useState<{ kind: string; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [writeMode, setWriteMode] = useState(false);
+  // N18: dialog xác nhận hoàn tác inline (thay window.confirm — thân thiện screen reader hơn)
+  const [rollbackTarget, setRollbackTarget] = useState<string | null>(null);
 
   const load = async () => {
     try {
@@ -51,7 +56,9 @@ export default function PheDuyetPage() {
     } catch (e) { setMsg({ kind: "error", text: (e as Error).message }); }
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [state]);
+  // N9: load() đọc `state` từ closure — cố ý chỉ chạy lại khi `state` đổi,
+  // không đưa vào deps để tránh vòng lặp khi load tự setChecked.
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps -- chạy lại khi state đổi, xem N9 */ }, [state]);
 
   const say = (kind: string, text: string) => setMsg({ kind, text });
 
@@ -73,13 +80,29 @@ export default function PheDuyetPage() {
     } catch (e) { say("error", (e as Error).message); }
   };
 
+  // N8: duyệt theo batch 10 request song song (thay vì await tuần tự 123 lần)
   const decideSelected = async (st: "approved" | "rejected") => {
     setBusy(true);
     try {
-      for (const id of Array.from(checked)) {
-        await api(`/api/approvals`, { method: "POST", body: JSON.stringify({ id, state: st, decidedBy: "user" }) });
+      const ids = Array.from(checked);
+      const BATCH = 10;
+      let okCount = 0;
+      const errors: string[] = [];
+      for (let i = 0; i < ids.length; i += BATCH) {
+        const chunk = ids.slice(i, i + BATCH);
+        const results = await Promise.allSettled(
+          chunk.map((id) => api(`/api/approvals`, {
+            method: "POST", body: JSON.stringify({ id, state: st, decidedBy: "user" }),
+          }))
+        );
+        results.forEach((r, j) => {
+          if (r.status === "fulfilled") okCount++;
+          else errors.push(`#${chunk[j]}: ${(r.reason as Error)?.message ?? "lỗi"}`);
+        });
       }
-      say("info", `Đã ${st === "approved" ? "duyệt" : "từ chối"} ${checked.size} dòng.`);
+      say(errors.length ? "warn" : "info",
+        `Đã ${st === "approved" ? "duyệt" : "từ chối"} ${okCount}/${ids.length} dòng.` +
+        (errors.length ? ` Lỗi: ${errors.slice(0, 5).join("; ")}${errors.length > 5 ? "…" : ""}` : ""));
       setState(st === "approved" ? "approved" : "rejected");
       await load();
     } catch (e) { say("error", (e as Error).message); } finally { setBusy(false); }
@@ -88,10 +111,13 @@ export default function PheDuyetPage() {
   const showPreview = async () => {
     setBusy(true);
     try {
+      // M3: chốt tập approvalIds đúng lúc preview (khử trùng, snapshot)
+      const ids = Array.from(new Set(checked));
       const r = await api<{ preview: PreviewRow[] }>(`/api/writeback/preview`, {
-        method: "POST", body: JSON.stringify({ approvalIds: Array.from(checked) }),
+        method: "POST", body: JSON.stringify({ approvalIds: ids }),
       });
       setPreview(r.preview);
+      setPreviewIds(ids); // M3: chốt tập dòng đúng lúc preview
     } catch (e) { say("error", (e as Error).message); } finally { setBusy(false); }
   };
 
@@ -100,26 +126,31 @@ export default function PheDuyetPage() {
       say("error", 'Hãy nhập đúng chữ "DONG Y" để xác nhận áp dụng.');
       return;
     }
+    if (!previewIds || previewIds.length === 0) {
+      say("error", "Hãy bấm “Xem trước thay đổi” trước khi áp dụng.");
+      return;
+    }
     setBusy(true);
     try {
       const r = await api<{ batchId: string; applied: number; failed: { keyRow: string; error: string }[] }>(
         `/api/writeback/apply`,
-        { method: "POST", body: JSON.stringify({ approvalIds: [...checked], confirmed: true, appliedBy: "user" }) },
+        // M3: áp dụng đúng tập đã preview, bất kể checkbox hiện tại
+        { method: "POST", body: JSON.stringify({ approvalIds: previewIds, confirmed: true, appliedBy: "user" }) },
       );
       say(r.failed.length ? "warn" : "info",
         `Đã áp dụng ${r.applied} dòng (đợt ${r.batchId}).` +
         (r.failed.length ? ` Thất bại ${r.failed.length}: ${r.failed.map((f) => f.keyRow).join(", ")}` : ""));
-      setPreview(null); setConfirmText("");
+      setPreview(null); setPreviewIds(null); setConfirmText("");
       setTab("log"); await load();
     } catch (e) { say("error", (e as Error).message); } finally { setBusy(false); }
   };
 
   const rollback = async (batchId: string) => {
-    if (!window.confirm(`Hoàn tác toàn bộ đợt ${batchId}? Các ô sẽ được ghi ngược về giá trị cũ.`)) return;
     setBusy(true);
     try {
       const r = await api<{ rolledBack: number; failed: number }>(`/api/writeback/rollback/${encodeURIComponent(batchId)}`, { method: "POST" });
       say("info", `Đã hoàn tác ${r.rolledBack} dòng${r.failed ? `, thất bại ${r.failed}` : ""}.`);
+      setRollbackTarget(null);
       await load();
     } catch (e) { say("error", (e as Error).message); } finally { setBusy(false); }
   };
@@ -128,6 +159,9 @@ export default function PheDuyetPage() {
     const n = new Set(checked);
     if (n.has(id)) n.delete(id); else n.add(id);
     setChecked(n);
+    // M3: đổi checkbox sau preview -> preview cũ hết hiệu lực
+    setPreview(null);
+    setPreviewIds(null);
   };
 
   return (
@@ -174,7 +208,8 @@ export default function PheDuyetPage() {
                 <tbody>
                   {rows.map((r) => (
                     <tr key={r.id}>
-                      <td><input type="checkbox" checked={checked.has(r.id)} onChange={() => toggleCheck(r.id)} /></td>
+                      <td><input type="checkbox" checked={checked.has(r.id)} onChange={() => toggleCheck(r.id)}
+                        aria-label={`Chọn dòng ${r.item_code || r.key_row} (${r.tab})`} /></td>
                       <td className="mono">{r.item_code || r.key_row}<div className="small muted">{r.tab}</div></td>
                       <td><StatusChip norm={r.status_norm} raw={r.status_raw} /></td>
                       <td><span className="chip chip-hoan_tat">{r.proposed_status}</span></td>
@@ -211,7 +246,7 @@ export default function PheDuyetPage() {
                   <button className="btn btn-danger" disabled={busy || !writeMode} onClick={apply}>
                     Áp dụng đợt đã duyệt
                   </button>
-                  <button className="btn btn-ghost" onClick={() => setPreview(null)}>Hủy</button>
+                  <button className="btn btn-ghost" onClick={() => { setPreview(null); setPreviewIds(null); }}>Hủy</button>
                 </div>
               </div>
             </div>
@@ -222,6 +257,20 @@ export default function PheDuyetPage() {
       {tab === "log" && (
         <div className="card">
           <div className="card-h">Lịch sử các đợt áp dụng</div>
+          {rollbackTarget && (
+            <div className="card-b" role="alertdialog" aria-modal="false"
+              aria-label="Xác nhận hoàn tác" style={{ borderBottom: "1px solid var(--border)" }}>
+              <p style={{ margin: "0 0 12px" }}>
+                Hoàn tác toàn bộ đợt <span className="mono">{rollbackTarget}</span>? Các ô sẽ được ghi ngược về giá trị cũ.
+              </p>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="btn btn-danger" disabled={busy} onClick={() => rollback(rollbackTarget)}>
+                  Xác nhận hoàn tác
+                </button>
+                <button className="btn btn-ghost" disabled={busy} onClick={() => setRollbackTarget(null)}>Hủy</button>
+              </div>
+            </div>
+          )}
           <div style={{ overflowX: "auto" }}>
             <table className="grid">
               <thead><tr><th>Đợt (batch)</th><th>Thời gian</th><th>Người áp dụng</th><th>Tổng</th><th>Đã ghi</th><th>Hoàn tác</th><th>Lỗi</th><th></th></tr></thead>
@@ -237,7 +286,7 @@ export default function PheDuyetPage() {
                     <td className="mono">{b.failed}</td>
                     <td>
                       {b.applied > 0 && (
-                        <button className="btn btn-ghost" disabled={busy || !writeMode} onClick={() => rollback(b.batch_id)}>
+                        <button className="btn btn-ghost" disabled={busy || !writeMode} onClick={() => setRollbackTarget(b.batch_id)}>
                           Hoàn tác đợt này
                         </button>
                       )}

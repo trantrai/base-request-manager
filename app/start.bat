@@ -31,5 +31,7 @@ echo.
 echo  BaseScope dang chay tai: http://localhost:3000
 echo  Nhan Ctrl+C de dung.
 echo.
+REM Chi nghe tren localhost (khong mo ra LAN) vi API chua co auth - B2 review round 1
+set HOSTNAME=127.0.0.1
 node .next\standalone\server.js
 pause

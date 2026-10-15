@@ -21,7 +21,7 @@ export default async function RequestPage({ params }: { params: Promise<{ id: st
       <h2 style={{ margin: "0 0 4px" }}>{String(first["request_name"] || decoded).slice(0, 100)}</h2>
       <p className="muted small">
         <code className="inline">{decoded}</code> · {rows.length} dòng · tab: {tabs.join(", ")}
-        {baseLink && <> · <a href={baseLink} target="_blank" rel="noreferrer">Mở trên base.vn</a></>}
+        {baseLink && <> · <a href={baseLink} target="_blank" rel="noopener noreferrer">Mở trên base.vn</a></>}
       </p>
       {agg && (
         <div className="card"><div className="card-b small">
