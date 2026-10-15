@@ -1,0 +1,30 @@
+# dependencies
+node_modules/
+app/node_modules/
+
+# next.js
+.next/
+out/
+app/.next/
+
+# data (real company data - never commit)
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+app/data/
+
+# env & secrets
+.env
+.env*.local
+*.pem
+service-account*.json
+credentials*.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# logs
+*.log
+npm-debug.log*
